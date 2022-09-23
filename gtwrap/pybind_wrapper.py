@@ -13,12 +13,68 @@ Author: Duy Nguyen Ta, Fan Jiang, Matthew Sklar, Varun Agrawal, and Frank Dellae
 # pylint: disable=too-many-arguments, too-many-instance-attributes, no-self-use, no-else-return, too-many-arguments, unused-format-string-argument, line-too-long
 
 import re
+import os
 from pathlib import Path
 from typing import List
 
 import gtwrap.interface_parser as parser
 import gtwrap.template_instantiator as instantiator
 
+MODULE_TEMPLATE = """
+/**
+ * @file    {module_name}.cc
+ * @brief   The auto-generated wrapper C++ source code.
+ * @author  Duy-Nguyen Ta, Fan Jiang, Matthew Sklar, Varun Agrawal
+ * @date    Aug. 18, 2020
+ *
+ * ** THIS FILE IS AUTO-GENERATED, DO NOT MODIFY! **
+ */
+
+// Include relevant boost libraries required by GTSAM
+{include_boost}
+
+#include <pybind11/eigen.h>
+#include <pybind11/stl_bind.h>
+#include <pybind11/pybind11.h>
+#include <pybind11/operators.h>
+#include <pybind11/functional.h>
+#include <pybind11/iostream.h>
+{additional_includes}
+
+// These are the included headers listed in `gtsam.i`
+{includes}
+#include <boost/serialization/export.hpp>
+
+// Export classes for serialization
+{boost_class_export}
+
+// Holder type for pybind11
+{holder_type}
+
+// Preamble for STL classes
+// TODO(fan): make this automatic
+#include "{preamble_header}"
+
+using namespace std;
+
+namespace py = pybind11;
+
+{submodules}
+
+{module_def} {{
+    m_.doc() = "pybind11 wrapper of {module_name}";
+
+    {maybe_import_dependencies}
+
+{submodules_init}
+
+{wrapped_namespace}
+
+// Specializations for STL classes
+#include "{specialization_header}"
+
+}}
+"""
 
 class PybindWrapper:
     """
@@ -29,13 +85,16 @@ class PybindWrapper:
                  top_module_namespaces='',
                  use_boost=False,
                  ignore_classes=(),
-                 module_template=""):
+                 additional_headers="",
+                 preample_header="",
+                 specialization_header="",
+                 dependencies=[]):
         self.module_name = module_name
         self.top_module_namespaces = top_module_namespaces
         self.use_boost = use_boost
         self.ignore_classes = ignore_classes
         self._serializing_classes = []
-        self.module_template = module_template
+        self.module_template = MODULE_TEMPLATE
         self.python_keywords = [
             'lambda', 'False', 'def', 'if', 'raise', 'None', 'del', 'import',
             'return', 'True', 'elif', 'in', 'try', 'and', 'else', 'is',
@@ -51,6 +110,11 @@ class PybindWrapper:
         self._ipython_special_methods = [
             "svg", "png", "jpeg", "html", "javascript", "markdown", "latex"
         ]
+
+        self._additional_headers = additional_headers
+        self._preamble_header = preample_header
+        self._specialization_header = specialization_header
+        self._dependencies = dependencies
 
     def _py_args_names(self, args):
         """Set the argument names in Pybind11 format."""
@@ -171,7 +235,8 @@ class PybindWrapper:
         """
         py_method = method.name + method_suffix
         cpp_method = method.to_cpp()
-
+        if cpp_method == "serialize" or cpp_method == "serializable":
+            return ''
         args_names = method.args.names()
         py_args_names = self._py_args_names(method.args)
         args_signature_with_names = self._method_args_signature(method.args)
@@ -611,7 +676,7 @@ class PybindWrapper:
             )
         return wrapped, includes
 
-    def wrap_file(self, content, module_name=None, submodules=None):
+    def wrap_file(self, content, module_name, submodules=[], is_submodule=False):
         """
         Wrap the code in the interface file.
 
@@ -648,17 +713,15 @@ class PybindWrapper:
         include_boost = "#include <boost/shared_ptr.hpp>" if self.use_boost else ""
 
         submodules_init = []
+        submodules_decl = []
 
-        if submodules is not None:
-            module_def = "PYBIND11_MODULE({0}, m_)".format(module_name)
-
-            for idx, submodule in enumerate(submodules):
-                submodules[idx] = "void {0}(py::module_ &);".format(submodule)
-                submodules_init.append("{0}(m_);".format(submodule))
-
+        if is_submodule:
+            module_def = "void {0}(py::module &m_)".format(module_name)
         else:
-            module_def = "void {0}(py::module_ &m_)".format(module_name)
-            submodules = []
+            module_def = "PYBIND11_MODULE({0}, m_)".format(module_name)
+            for submodule in submodules:
+                submodules_decl.append("void {0}(py::module &);".format(submodule))
+                submodules_init.append("{0}(m_);".format(submodule))
 
         return self.module_template.format(
             include_boost=include_boost,
@@ -670,8 +733,19 @@ class PybindWrapper:
             if self.use_boost else "",
             wrapped_namespace=wrapped_namespace,
             boost_class_export=boost_class_export,
-            submodules="\n".join(submodules),
+            submodules="\n".join(submodules_decl),
             submodules_init="\n".join(submodules_init),
+            additional_includes="\n".join(
+                [f'#include "{inc}"' for inc in self._additional_headers]
+            ),
+            preamble_header=self._preamble_header,
+            specialization_header=self._specialization_header,
+            maybe_import_dependencies="\n".join(
+                [
+                    f'\tpy::module::import("{dep}");'
+                    for dep in self._dependencies
+                ]
+            ),
         )
 
     def wrap_submodule(self, source):
@@ -696,32 +770,26 @@ class PybindWrapper:
         cc_content = self.wrap_file(content, module_name=module_name)
 
         # Generate the C++ code which Pybind11 will use.
-        with open(filename.replace(".i", ".cpp"), "w") as f:
+        with open(filename.replace(".i", ".cc"), "w") as f:
             f.write(cc_content)
 
-    def wrap(self, sources, main_module_name):
+    def wrap(self, source, out_file, submodules=[], is_submodule=False):
         """
         Wrap all the main interface file.
 
         Args:
-            sources: List of all interface files.
-                The first file should be the main module.
-            main_module_name: The name for the main module.
+            source: The interface file.
+            out_file: Path to .cc output file.
+            submodules: List of submodules.
         """
-        main_module = sources[0]
-
-        # Get all the submodule names.
-        submodules = []
-        for source in sources[1:]:
-            module_name = Path(source).stem
-            submodules.append(module_name)
-
-        with open(main_module, "r") as f:
+        with open(source, "r") as f:
             content = f.read()
         cc_content = self.wrap_file(content,
                                     module_name=self.module_name,
-                                    submodules=submodules)
+                                    submodules=submodules,
+                                    is_submodule=is_submodule,
+                                    )
 
         # Generate the C++ code which Pybind11 will use.
-        with open(main_module_name, "w") as f:
+        with open(out_file, "w") as f:
             f.write(cc_content)

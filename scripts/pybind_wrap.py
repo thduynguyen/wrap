@@ -28,10 +28,10 @@ def main():
         "used in the Python `import` statement.",
     )
     arg_parser.add_argument(
-        "--out",
+        "--out_file",
         type=str,
         required=True,
-        help="Name of the output pybind .cc file(s)",
+        help="Output cc file.",
     )
     arg_parser.add_argument(
         "--use-boost",
@@ -58,36 +58,57 @@ def main():
         help="A space-separated list of classes to ignore. "
         "Class names must include their full namespaces.",
     )
-    arg_parser.add_argument("--template",
-                            type=str,
-                            help="The module template file (e.g. module.tpl).")
-    arg_parser.add_argument("--is_submodule",
+    group = arg_parser.add_mutually_exclusive_group(required=False)
+    group.add_argument("--is_submodule",
                             default=False,
                             action="store_true")
+    group.add_argument(
+        "--submodules",
+        nargs="+",
+        default = [],
+        help="List of submodules",
+    )
+
+    arg_parser.add_argument(
+        "--additional_headers",
+        nargs="+",
+        default=[],
+    )
+    arg_parser.add_argument(
+        "--preamble_header",
+        type=str,
+        default="Preamble header to include for STL classes",
+    )
+    arg_parser.add_argument(
+        "--specialization_header",
+        type=str,
+        default="Specialization header to include for STL classes",
+    )
+    arg_parser.add_argument(
+        "--dependencies",
+        nargs="+",
+        default=[],
+        help="Dependent libs to import",
+    )
     args = arg_parser.parse_args()
 
     top_module_namespaces = args.top_module_namespaces.split("::")
     if top_module_namespaces[0]:
         top_module_namespaces = [''] + top_module_namespaces
 
-    with open(args.template, "r") as f:
-        template_content = f.read()
-
     wrapper = PybindWrapper(
         module_name=args.module_name,
         use_boost=args.use_boost,
         top_module_namespaces=top_module_namespaces,
         ignore_classes=args.ignore,
-        module_template=template_content,
+        additional_headers=args.additional_headers,
+        preample_header=args.preamble_header,
+        specialization_header=args.specialization_header,
+        dependencies=args.dependencies,
     )
 
-    if args.is_submodule:
-        wrapper.wrap_submodule(args.src)
-
-    else:
-        # Wrap the code and get back the cpp/cc code.
-        sources = args.src.split(';')
-        wrapper.wrap(sources, args.out)
+    # Wrap the code and get back the cpp/cc code.
+    wrapper.wrap(args.src, args.out_file, args.submodules, args.is_submodule)
 
 
 if __name__ == "__main__":
