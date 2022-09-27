@@ -75,14 +75,16 @@ def main():
         default=[],
     )
     arg_parser.add_argument(
-        "--preamble_header",
-        type=str,
-        default="Preamble header to include for STL classes",
+        "--preamble_headers",
+        nargs="+",
+        default=[],
+        help="Preamble headers to include for STL classes",
     )
     arg_parser.add_argument(
-        "--specialization_header",
-        type=str,
-        default="Specialization header to include for STL classes",
+        "--specialization_headers",
+        nargs="+",
+        default=[],
+        help="Specialization headers to include for STL classes",
     )
     arg_parser.add_argument(
         "--dependencies",
@@ -102,8 +104,8 @@ def main():
         top_module_namespaces=top_module_namespaces,
         ignore_classes=args.ignore,
         additional_headers=args.additional_headers,
-        preample_header=args.preamble_header,
-        specialization_header=args.specialization_header,
+        preample_headers=args.preamble_headers,
+        specialization_headers=args.specialization_headers,
         dependencies=args.dependencies,
     )
 

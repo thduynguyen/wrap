@@ -53,7 +53,7 @@ MODULE_TEMPLATE = """
 
 // Preamble for STL classes
 // TODO(fan): make this automatic
-#include "{preamble_header}"
+{preamble_includes}
 
 using namespace std;
 
@@ -71,7 +71,7 @@ namespace py = pybind11;
 {wrapped_namespace}
 
 // Specializations for STL classes
-#include "{specialization_header}"
+{specialization_includes}
 
 }}
 """
@@ -85,9 +85,9 @@ class PybindWrapper:
                  top_module_namespaces='',
                  use_boost=False,
                  ignore_classes=(),
-                 additional_headers="",
-                 preample_header="",
-                 specialization_header="",
+                 additional_headers=[],
+                 preample_headers=[],
+                 specialization_headers=[],
                  dependencies=[]):
         self.module_name = module_name
         self.top_module_namespaces = top_module_namespaces
@@ -112,8 +112,8 @@ class PybindWrapper:
         ]
 
         self._additional_headers = additional_headers
-        self._preamble_header = preample_header
-        self._specialization_header = specialization_header
+        self._preamble_headers = preample_headers
+        self._specialization_headers = specialization_headers
         self._dependencies = dependencies
 
     def _py_args_names(self, args):
@@ -738,8 +738,12 @@ class PybindWrapper:
             additional_includes="\n".join(
                 [f'#include "{inc}"' for inc in self._additional_headers]
             ),
-            preamble_header=self._preamble_header,
-            specialization_header=self._specialization_header,
+            preamble_includes="\n".join(
+                [f'#include "{inc}"' for inc in self._preamble_headers]
+            ),
+            specialization_includes="\n".join(
+                [f'#include "{inc}"' for inc in self._specialization_headers]
+            ),
             maybe_import_dependencies="\n".join(
                 [
                     f'\tpy::module::import("{dep}");'
